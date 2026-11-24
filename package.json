@@ -46,12 +46,50 @@
         "command": "squasher.squashCommitsFromPalette",
         "title": "Squash Commits...",
         "category": "Squasher"
+      },
+      {
+        "command": "squasher.squashSelectedCommits",
+        "title": "Squash Selected Commits...",
+        "category": "Squasher"
+      },
+      {
+        "command": "squasher.refreshCommits",
+        "title": "Refresh Commits",
+        "category": "Squasher",
+        "icon": "$(refresh)"
       }
     ],
+    "views": {
+      "scm": [
+        {
+          "id": "squasher.commits",
+          "name": "Squasher: Commits",
+          "when": "scmProvider == git"
+        }
+      ]
+    },
     "menus": {
+      "view/title": [
+        {
+          "command": "squasher.refreshCommits",
+          "when": "view == squasher.commits",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "squasher.squashSelectedCommits",
+          "when": "view == squasher.commits && viewItem == squasherCommit",
+          "group": "1_modification"
+        }
+      ],
       "commandPalette": [
         {
           "command": "squasher.squashCommits",
+          "when": "false"
+        },
+        {
+          "command": "squasher.squashSelectedCommits",
           "when": "false"
         },
         {

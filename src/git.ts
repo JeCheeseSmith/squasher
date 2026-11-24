@@ -5,6 +5,7 @@ import { spawn } from 'child_process';
 export interface GitRepository {
     readonly rootUri: vscode.Uri;
     readonly state: {
+        readonly onDidChange: vscode.Event<void>;
         readonly HEAD?: { readonly name?: string; readonly commit?: string };
         readonly workingTreeChanges: readonly unknown[];
         readonly indexChanges: readonly unknown[];

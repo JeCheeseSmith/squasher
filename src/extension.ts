@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { getGitAPI, execGit, execGitOrThrow, GitRepository } from './git';
-import { squashCommits } from './squash';
+import { squashCommits, topoSortHashes } from './squash';
+import { CommitsProvider, CommitNode } from './commitsView';
 
 // Arguments passed to commands contributed to `scm/historyItem/context`:
 //   (provider: ISCMProvider, ...historyItems: SourceControlHistoryItem[])
@@ -15,7 +16,55 @@ interface HistoryItemArg {
 	readonly id?: string;
 }
 
+/**
+ * One selected commit expands up to HEAD and lets the user trim the range.
+ * Several selected commits are made contiguous (gaps filled) and must end at HEAD.
+ */
+async function squashSelection(repo: GitRepository, hashes: string[]): Promise<void> {
+	if (hashes.length === 1) {
+		const expanded = await expandToHead(repo, hashes[0]);
+		if (!expanded) {
+			return;
+		}
+		if (expanded.length < 2) {
+			vscode.window.showInformationMessage(
+				'Squasher: that commit is already HEAD. Select an older commit — Squasher combines it with everything above it up to HEAD.'
+			);
+			return;
+		}
+		const trimmed = await pickRangeFromHead(expanded);
+		if (!trimmed) {
+			return;
+		}
+		await squashCommits(repo, trimmed);
+		return;
+	}
+
+	const sorted = await topoSortHashes(repo.rootUri.fsPath, hashes);
+	const range = await expandToHead(repo, sorted[0]);
+	if (!range) {
+		return;
+	}
+	const newestIdx = range.findIndex((c) => c.hash === sorted[sorted.length - 1]);
+	if (newestIdx < 0) {
+		vscode.window.showErrorMessage('Squasher: selected commits must all be on the current branch\'s first-parent history.');
+		return;
+	}
+	if (newestIdx !== range.length - 1) {
+		vscode.window.showErrorMessage('Squasher: the newest selected commit must be HEAD. Include the top commit in your selection.');
+		return;
+	}
+	await squashCommits(repo, range.map((c) => c.hash));
+}
+
 export function activate(context: vscode.ExtensionContext) {
+	const commitsProvider = new CommitsProvider();
+	const commitsView = vscode.window.createTreeView('squasher.commits', {
+		treeDataProvider: commitsProvider,
+		canSelectMany: true,
+	});
+	context.subscriptions.push(commitsView, commitsProvider);
+
 	context.subscriptions.push(
 		vscode.commands.registerCommand(
 			'squasher.squashCommits',
@@ -41,33 +90,24 @@ export function activate(context: vscode.ExtensionContext) {
 					return;
 				}
 
-				// The Source Control Graph tree is single-select
-				// (multipleSelectionSupport: false), so we almost always receive
-				// exactly one commit. Expand the selection to include every commit
-				// from the picked one up to HEAD along first-parent, then let the
-				// user trim the range via QuickPick before mutating history.
-				let hashesToSquash = hashes;
-				if (hashesToSquash.length === 1) {
-					const expanded = await expandToHead(repo, hashesToSquash[0]);
-					if (!expanded) {
-						return;
-					}
-					if (expanded.length < 2) {
-						vscode.window.showInformationMessage(
-							'Squasher: that commit is already HEAD. Right-click an older commit (further down the graph) — Squasher combines that commit with everything above it up to HEAD.'
-						);
-						return;
-					}
-					const trimmed = await pickRangeFromHead(expanded);
-					if (!trimmed) {
-						return;
-					}
-					hashesToSquash = trimmed;
-				}
-
-				await squashCommits(repo, hashesToSquash);
+				await squashSelection(repo, hashes);
 			}
 		),
+
+		vscode.commands.registerCommand(
+			'squasher.squashSelectedCommits',
+			async (clicked?: CommitNode, selected?: readonly CommitNode[]) => {
+				const nodes = selected && selected.length > 0 ? selected : clicked ? [clicked] : [];
+				if (nodes.length === 0) {
+					vscode.window.showErrorMessage('Squasher: no commit selected.');
+					return;
+				}
+				await squashSelection(nodes[0].repo, nodes.map((n) => n.hash));
+				commitsProvider.refresh();
+			}
+		),
+
+		vscode.commands.registerCommand('squasher.refreshCommits', () => commitsProvider.refresh()),
 
 		vscode.commands.registerCommand('squasher.squashCommitsFromPalette', async () => {
 			const api = await getGitAPI();
